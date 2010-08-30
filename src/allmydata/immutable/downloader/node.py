@@ -384,6 +384,7 @@ class DownloadNode:
         self._start_new_segment()
 
     def process_blocks(self, segnum, blocks):
+        start = now()
         d = defer.maybeDeferred(self._decode_blocks, segnum, blocks)
         d.addCallback(self._check_ciphertext_hash, segnum)
         def _deliver(result):
@@ -410,6 +411,7 @@ class DownloadNode:
                     seg_ev.activate(when)
                     seg_ev.deliver(when, offset, len(segment), decodetime)
                     eventually(self._deliver, d, c, result)
+            self._download_status.add_misc_event("process_block", start, now())
             self._active_segment = None
             self._start_new_segment()
         d.addBoth(_deliver)
@@ -417,6 +419,7 @@ class DownloadNode:
                      level=log.WEIRD, parent=self._lp, umid="MkEsCg")
 
     def _decode_blocks(self, segnum, blocks):
+        start = now()
         tail = (segnum == self.num_segments-1)
         codec = self._codec
         block_size = self.block_size
@@ -437,7 +440,6 @@ class DownloadNode:
             shares.append(share)
         del blocks
 
-        start = now()
         d = codec.decode(shares, shareids)   # segment
         del shares
         def _process(buffers):
@@ -447,11 +449,13 @@ class DownloadNode:
             del buffers
             if tail:
                 segment = segment[:self.tail_segment_size]
+            self._download_status.add_misc_event("decode", start, now())
             return (segment, decodetime)
         d.addCallback(_process)
         return d
 
     def _check_ciphertext_hash(self, (segment, decodetime), segnum):
+        start = now()
         assert self._active_segment.segnum == segnum
         assert self.segment_size is not None
         offset = segnum * self.segment_size
@@ -459,6 +463,7 @@ class DownloadNode:
         h = hashutil.crypttext_segment_hash(segment)
         try:
             self.ciphertext_hash_tree.set_hashes(leaves={segnum: h})
+            self._download_status.add_misc_event("CThash", start, now())
             return (offset, segment, decodetime)
         except (BadHashError, NotEnoughHashesError):
             format = ("hash failure in ciphertext_hash_tree:"
